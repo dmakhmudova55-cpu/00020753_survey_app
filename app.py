@@ -2,22 +2,15 @@ import streamlit as st
 import json
 from datetime import datetime
 
-# ---------------- DATA ----------------
-version_float = 2.0
+st.set_page_config(page_title="Pomodoro Survey")
+st.title("🍅 Pomodoro Technique Survey")
+st.info("Please fill out your details and answer all questions honestly.")
 
-# Load questions from external JSON file
+# Load questions from JSON
 with open("questions.json", "r", encoding="utf-8") as f:
     questions = json.load(f)
 
-psych_states = {
-    "Very Low Usage": (0, 10),
-    "Low Usage": (11, 20),
-    "Moderate Usage": (21, 35),
-    "High Usage": (36, 50),
-    "Very High Usage": (51, 60)
-}
-
-# ---------------- HELPERS ----------------
+# Helper functions
 def validate_name(name: str) -> bool:
     return len(name.strip()) > 0 and not any(c.isdigit() for c in name)
 
@@ -29,30 +22,36 @@ def validate_dob(dob: str) -> bool:
         return False
 
 def interpret_score(score: int) -> str:
-    for state, (low, high) in psych_states.items():
+    ranges = {
+        "Very Low Usage": (0, 10),
+        "Low Usage": (11, 20),
+        "Moderate Usage": (21, 35),
+        "High Usage": (36, 50),
+        "Very High Usage": (51, 60)
+    }
+    for k, (low, high) in ranges.items():
         if low <= score <= high:
-            return state
+            return k
     return "Unknown"
 
 def save_json(filename: str, data: dict):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
-# ---------------- STREAMLIT APP ----------------
-st.set_page_config(page_title="Pomodoro Survey")
-st.title("🍅 Pomodoro Technique Survey")
-st.info("Please fill out your details and answer all questions honestly.")
+# ---------------- Session State Initialization ----------------
+if "personal_valid" not in st.session_state:
+    st.session_state.personal_valid = False
+if "answers" not in st.session_state:
+    st.session_state.answers = [""] * len(questions)
 
-# ---------------- PERSONAL INFO ----------------
+# ---------------- Personal Info ----------------
 st.header("Step 1: Enter Personal Information")
-name = st.text_input("Given Name")
-surname = st.text_input("Surname")
-dob = st.text_input("Date of Birth (YYYY-MM-DD)")
-sid = st.text_input("Student ID (digits only)")
+name = st.text_input("Given Name", value=st.session_state.get("name",""))
+surname = st.text_input("Surname", value=st.session_state.get("surname",""))
+dob = st.text_input("Date of Birth (YYYY-MM-DD)", value=st.session_state.get("dob",""))
+sid = st.text_input("Student ID (digits only)", value=st.session_state.get("sid",""))
 
-# Button to validate personal info
-if st.button("Start Survey"):
-
+def validate_personal():
     errors = []
     if not validate_name(name):
         errors.append("Invalid given name.")
@@ -62,54 +61,61 @@ if st.button("Start Survey"):
         errors.append("Invalid date of birth format.")
     if not sid.isdigit():
         errors.append("Student ID must be digits only.")
-
     if errors:
         for e in errors:
             st.error(e)
-        st.warning("Please correct your information to proceed to the survey.")
+        return False
     else:
-        st.success("All inputs valid. Proceed to survey.")
+        st.session_state.personal_valid = True
+        st.session_state.name = name
+        st.session_state.surname = surname
+        st.session_state.dob = dob
+        st.session_state.sid = sid
+        return True
 
-        # ---------------- SURVEY ----------------
-        st.header("Step 2: Pomodoro Survey")
-        answers = []
+if st.button("Start Survey"):
+    validate_personal()
+
+# ---------------- Survey ----------------
+if st.session_state.personal_valid:
+    st.header("Step 2: Pomodoro Survey")
+    for idx, q in enumerate(questions):
+        st.session_state.answers[idx] = st.selectbox(
+            f"Q{idx+1}. {q['q']}",
+            [opt[0] for opt in q["opts"]],
+            index=0 if st.session_state.answers[idx]=="" else [opt[0] for opt in q["opts"]].index(st.session_state.answers[idx]),
+            key=f"q{idx}"
+        )
+
+    if st.button("Submit Survey"):
         total_score = 0
         answer_records = []
-
-        # Display each question from JSON
         for idx, q in enumerate(questions):
-            choice = st.selectbox(f"Q{idx+1}. {q['q']}", [opt[0] for opt in q["opts"]], key=f"q{idx}")
-            answers.append(choice)
+            selected = st.session_state.answers[idx]
+            score = next(score for label, score in q["opts"] if label == selected)
+            total_score += score
+            answer_records.append({
+                "question": q["q"],
+                "selected_option": selected,
+                "score": score
+            })
 
-        # Submit survey button
-        if st.button("Submit Survey"):
-            for idx, q in enumerate(questions):
-                selected = answers[idx]
-                score = next(score for label, score in q["opts"] if label == selected)
-                total_score += score
-                answer_records.append({
-                    "question": q["q"],
-                    "selected_option": selected,
-                    "score": score
-                })
+        status = interpret_score(total_score)
+        st.markdown(f"## ✅ Your Result: {status}")
+        st.markdown(f"Total Score: {total_score} / 60")
 
-            status = interpret_score(total_score)
-            st.markdown(f"## ✅ Your Result: {status}")
-            st.markdown(f"Total Score: {total_score} / 60")
+        record = {
+            "name": st.session_state.name,
+            "surname": st.session_state.surname,
+            "dob": st.session_state.dob,
+            "student_id": st.session_state.sid,
+            "total_score": total_score,
+            "result": status,
+            "answers": answer_records,
+            "version": 2.0
+        }
 
-            record = {
-                "name": name,
-                "surname": surname,
-                "dob": dob,
-                "student_id": sid,
-                "total_score": total_score,
-                "result": status,
-                "answers": answer_records,
-                "version": version_float
-            }
-
-            json_filename = f"{sid}_pomodoro_result.json"
-            save_json(json_filename, record)
-            st.success(f"Saved as {json_filename}")
-            st.download_button("Download JSON", json.dumps(record, indent=2), file_name=json_filename)
-
+        json_filename = f"{st.session_state.sid}_pomodoro_result.json"
+        save_json(json_filename, record)
+        st.success(f"Saved as {json_filename}")
+        st.download_button("Download JSON", json.dumps(record, indent=2), file_name=json_filename)
